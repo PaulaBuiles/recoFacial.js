@@ -1,73 +1,90 @@
-const express = require('express')
-const path = require('path')
-const { get } = require('request')
+const express = require('express');
+const path = require('path');
+const fetch = require('node-fetch');
+const connection = require('./db'); // Importa la conexión a la base de datos
 
-const app = express()
+const app = express();
 
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }))
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-const viewsDir = path.join(__dirname, 'views')
-app.use(express.static(viewsDir))
-app.use(express.static(path.join(__dirname, './public')))
-app.use(express.static(path.join(__dirname, '../images')))
-app.use(express.static(path.join(__dirname, '../media')))
-app.use(express.static(path.join(__dirname, '../../weights')))
-app.use(express.static(path.join(__dirname, '../../dist')))
+const viewsDir = path.join(__dirname, 'views');
+app.use(express.static(viewsDir));
+app.use(express.static(path.join(__dirname, './public')));
+app.use(express.static(path.join(__dirname, '../../weights')));
+app.use(express.static(path.join(__dirname, '../../dist')));
 
-app.get('/', (req, res) => res.redirect('/face_detection'))
-app.get('/face_detection', (req, res) => res.sendFile(path.join(viewsDir, 'faceDetection.html')))
-app.get('/face_landmark_detection', (req, res) => res.sendFile(path.join(viewsDir, 'faceLandmarkDetection.html')))
-app.get('/face_expression_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'faceExpressionRecognition.html')))
-app.get('/age_and_gender_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'ageAndGenderRecognition.html')))
-app.get('/face_extraction', (req, res) => res.sendFile(path.join(viewsDir, 'faceExtraction.html')))
-app.get('/face_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'faceRecognition.html')))
-app.get('/video_face_tracking', (req, res) => res.sendFile(path.join(viewsDir, 'videoFaceTracking.html')))
-app.get('/webcam_face_detection', (req, res) => res.sendFile(path.join(viewsDir, 'webcamFaceDetection.html')))
-app.get('/webcam_face_landmark_detection', (req, res) => res.sendFile(path.join(viewsDir, 'webcamFaceLandmarkDetection.html')))
-app.get('/webcam_face_expression_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'webcamFaceExpressionRecognition.html')))
-app.get('/webcam_age_and_gender_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'webcamAgeAndGenderRecognition.html')))
-app.get('/bbt_face_landmark_detection', (req, res) => res.sendFile(path.join(viewsDir, 'bbtFaceLandmarkDetection.html')))
-app.get('/bbt_face_similarity', (req, res) => res.sendFile(path.join(viewsDir, 'bbtFaceSimilarity.html')))
-app.get('/bbt_face_matching', (req, res) => res.sendFile(path.join(viewsDir, 'bbtFaceMatching.html')))
-app.get('/bbt_face_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'bbtFaceRecognition.html')))
-app.get('/batch_face_landmarks', (req, res) => res.sendFile(path.join(viewsDir, 'batchFaceLandmarks.html')))
-app.get('/batch_face_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'batchFaceRecognition.html')))
+// NUEVO ENDPOINT: Obtener la foto de la base de datos usando la identificación
+app.get('/foto/:identificacion', (req, res) => {
+  const { identificacion } = req.params;
 
-app.post('/fetch_external_image', async (req, res) => {
-  const { imageUrl } = req.body
-  if (!imageUrl) {
-    return res.status(400).send('imageUrl param required')
-  }
+  const query = `
+    SELECT FP.foto, FP.foto_thumb
+    FROM persona P
+    LEFT JOIN foto_persona FP ON P.id_persona = FP.id_persona AND FP.estado = 1
+    WHERE P.identificacion = ? 
+      AND P.eliminado = 0
+  `;
+
+  connection.query(query, [identificacion], (error, results) => {
+    if (error) {
+      console.error('Error al realizar la consulta:', error);  // Asegúrate de registrar el error
+      res.status(500).send('Error en el servidor');
+      return;
+    }
+
+    if (results.length > 0) {
+      const fotoPath = results[0].foto;
+      const fotoUrl = `https://sgsst.co/${fotoPath}`;
+      res.json({ fotoUrl });
+    } else {
+      res.status(404).send('Persona no encontrada');
+    }
+  });
+});
+
+// Proxy para las imágenes externas
+app.get('/proxy-image', async (req, res) => {
+  const imageUrl = req.query.url;
+
   try {
-    const externalResponse = await request(imageUrl)
-    res.set('content-type', externalResponse.headers['content-type'])
-    return res.status(202).send(Buffer.from(externalResponse.body))
-  } catch (err) {
-    return res.status(404).send(err.toString())
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+
+    const contentType = response.headers.get('content-type');
+    res.set('Content-Type', contentType);
+    const buffer = await response.buffer();
+    res.send(buffer);
+  } catch (error) {
+    console.error('Error al obtener la imagen:', error);
+    res.status(500).send('Error al obtener la imagen');
   }
-})
+});
 
-app.listen(3000, () => console.log('Listening on port 3000!'))
+app.get('/', (req, res) => res.redirect('/face_detection'));
+app.get('/face_recognition', (req, res) => res.sendFile(path.join(viewsDir, 'faceRecognition.html')));
 
-function request(url, returnBuffer = true, timeout = 10000) {
+app.listen(4000, () => console.log('Listening on port 4000!'));
+
+
+/*function request(url, returnBuffer = true, timeout = 10000) {
   return new Promise(function(resolve, reject) {
     const options = Object.assign(
-      {},
-      {
-        url,
-        isBuffer: true,
-        timeout,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Safari/537.36'
-        }
-      },
-      returnBuffer ? { encoding: null } : {}
-    )
+        {},
+        {
+          url,
+          isBuffer: true,
+          timeout,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Safari/537.36'
+          }
+        },
+        returnBuffer ? { encoding: null } : {}
+    );
 
     get(options, function(err, res) {
-      if (err) return reject(err)
-      return resolve(res)
-    })
-  })
-}
+      if (err) return reject(err);
+      return resolve(res);
+    });
+  });
+}*/
